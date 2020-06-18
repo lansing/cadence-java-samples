@@ -21,11 +21,10 @@ import static com.uber.cadence.samples.common.SampleConstants.DOMAIN;
 
 import com.uber.cadence.WorkflowExecution;
 import com.uber.cadence.client.WorkflowClient;
+import com.uber.cadence.common.RetryOptions;
 import com.uber.cadence.worker.Worker;
-import com.uber.cadence.workflow.Async;
-import com.uber.cadence.workflow.Promise;
-import com.uber.cadence.workflow.Workflow;
-import com.uber.cadence.workflow.WorkflowMethod;
+import com.uber.cadence.workflow.*;
+import java.time.Duration;
 
 /** Demonstrates a child workflow. Requires a local instance of the Cadence server to be running. */
 public class HelloChild {
@@ -35,7 +34,7 @@ public class HelloChild {
   /** The parent workflow interface. */
   public interface GreetingWorkflow {
     /** @return greeting string */
-    @WorkflowMethod(executionStartToCloseTimeoutSeconds = 10, taskList = TASK_LIST)
+    @WorkflowMethod(executionStartToCloseTimeoutSeconds = 60, taskList = TASK_LIST)
     String getGreeting(String name);
   }
 
@@ -51,7 +50,19 @@ public class HelloChild {
     @Override
     public String getGreeting(String name) {
       // Workflows are stateful. So a new stub must be created for each new child.
-      GreetingChild child = Workflow.newChildWorkflowStub(GreetingChild.class);
+      RetryOptions retryOptions =
+          new RetryOptions.Builder()
+              .setExpiration(Duration.ofMinutes(1))
+              .setInitialInterval(Duration.ofSeconds(10))
+              .setMaximumAttempts(3)
+              .setBackoffCoefficient(1.0)
+              .build();
+
+      ChildWorkflowOptions childWorkflowOptions =
+          new ChildWorkflowOptions.Builder().setRetryOptions(retryOptions).build();
+
+      GreetingChild child =
+          Workflow.newChildWorkflowStub(GreetingChild.class, childWorkflowOptions);
 
       // This is a non blocking call that returns immediately.
       // Use child.composeGreeting("Hello", name) to call synchronously.
@@ -82,6 +93,9 @@ public class HelloChild {
   public static class GreetingChildImpl implements GreetingChild {
     @Override
     public String composeGreeting(String greeting, String name) {
+      if (name.equals("World")) {
+        throw new RuntimeException("nope");
+      }
       return greeting + " " + name + "!";
     }
   }
